@@ -1,0 +1,214 @@
+# Board file template for the BCM43602 in the MacBookPro14,3.
+#
+# mbp143-wifi-setup writes the board file from this at install. A line
+# "name=@srom" gets that variable's value from the machine's own Wi-Fi chip:
+# its SROM, where the factory stored the board's type and flags and the
+# calibration of each chip. Every other line is written as it stands:
+#
+# - macaddr: Broadcom's default; NetworkManager gives each machine its own
+#   address instead (macbookWifiStableMac.conf).
+# - ccode, regrev: the firmware's table for Germany, revision 2, which allows
+#   80 MHz channels on 5 GHz. Elsewhere brcmfmac switches to the local table.
+# - boardflags3: the firmware does not start with the chip's own value.
+# - pa2ga0, pa2ga1, maxp2ga0, maxp2ga1: the 2.4 GHz calibration of chains 0
+#   and 1 from the MacBookPro13,3's board file. With the chip's own values
+#   this firmware does not connect on 2.4 GHz.
+# - aga0, aga1, agbg0, agbg1: antenna gains from the same file; the chip's
+#   own lower the 2.4 GHz transmit power by 3.5 dB.
+# - rssicorrnorm_c0, rssicorrnorm_c1: the chip's own make the reported
+#   signal 8 to 12 dB wrong with this firmware.
+# - vendid, devid, muxenab, otpimagesize, nocrc, AvVmid_c*, rssicorrnorm5g_c*
+#   and the btc* lines (Bluetooth coexistence) are not stored on the chip;
+#   they come from the MacBookPro13,3's board file.
+
+boardrev=@srom
+sromrev=@srom
+boardtype=@srom
+vendid=0x14e4
+devid=0x43ba
+macaddr=00:90:4c:0d:f4:3e
+ccode=DE
+regrev=2
+boardflags=@srom
+boardflags2=@srom
+boardflags3=0x4200000d
+btcdyn_flags=0x7
+btcdyn_profile_type=0x2
+btcdyn_dflt_dsns_level=0
+btcdyn_low_dsns_level=0
+btcdyn_mid_dsns_level=21
+btcdyn_high_dsns_level=22
+btcdyn_default_btc_mode=4
+btcdyn_msw_rows=1
+btcdyn_dsns_rows=1
+btcdyn_msw_row0=1,-16,-95,-100
+btcdyn_dsns_row0=4,-16,-63,-95
+xtalfreq=@srom
+otpimagesize=484
+nocrc=1
+muxenab=0x1
+btc_params82=0x60
+antswitch=@srom
+rxchain=@srom
+txchain=@srom
+aa2g=@srom
+aa5g=@srom
+femctrl=@srom
+agbg0=2
+agbg1=2
+aga0=2
+aga1=2
+rssicorrnorm_c0=4,4
+rssicorrnorm_c1=4,4
+rssicorrnorm5g_c0=1,2,3,1,2,3,1,2,3,1,2,3
+rssicorrnorm5g_c1=1,2,3,1,2,3,1,2,3,1,2,3
+sb20in40hrpo=@srom
+sb20in40lrpo=@srom
+dot11agduphrpo=@srom
+dot11agduplrpo=@srom
+tworangetssi2g=@srom
+pdgain2g=@srom
+maxp2ga0=74
+maxp2ga1=74
+pa2ga0=-162,6368,-735
+pa2ga1=-170,6349,-742
+cckbw202gpo=@srom
+cckbw20ul2gpo=@srom
+mcsbw202gpo=@srom
+mcsbw402gpo=@srom
+dot11agofdmhrbw202gpo=@srom
+ofdmlrbw202gpo=@srom
+AvVmid_c0=2,140,2,125,2,125,2,135,2,135
+AvVmid_c1=2,140,3,100,3,100,3,100,3,100
+AvVmid_c2=0,0,0,0,0,0,0,0,0,0
+tworangetssi5g=@srom
+subband5gver=@srom
+pdgain5g=@srom
+pa5ga0=@srom
+pa5ga1=@srom
+mcsbw205glpo=@srom
+mcsbw405glpo=@srom
+mcsbw805glpo=@srom
+mcsbw205gmpo=@srom
+mcsbw405gmpo=@srom
+mcsbw805gmpo=@srom
+mcsbw205ghpo=@srom
+mcsbw405ghpo=@srom
+mcsbw805ghpo=@srom
+mcslr5glpo=@srom
+mcslr5gmpo=@srom
+mcslr5ghpo=@srom
+sb20in80and160hr5glpo=@srom
+sb40and80hr5glpo=@srom
+sb20in80and160hr5gmpo=@srom
+sb40and80hr5gmpo=@srom
+sb20in80and160hr5ghpo=@srom
+sb40and80hr5ghpo=@srom
+sb20in80and160lr5glpo=@srom
+sb40and80lr5glpo=@srom
+sb20in80and160lr5gmpo=@srom
+sb40and80lr5gmpo=@srom
+sb20in80and160lr5ghpo=@srom
+sb40and80lr5ghpo=@srom
+tempthresh=@srom
+tempoffset=@srom
+rawtempsense=@srom
+phycal_tempdelta=@srom
+temps_period=@srom
+temps_hysteresis=@srom
+aga2=@srom
+noiselvl2ga2=@srom
+noiselvl5ga2=@srom
+rxgainerr2ga2=@srom
+rxgainerr5ga2=@srom
+rxgains5gmelnagaina2=@srom
+rxgains5gmtrisoa2=@srom
+rxgains5gmtrelnabypa2=@srom
+rxgains5ghelnagaina2=@srom
+rxgains5ghtrisoa2=@srom
+rxgains5ghtrelnabypa2=@srom
+maxp2ga2=@srom
+maxp5gb4a2=@srom
+pa2ga2=@srom
+pa2g40a2=@srom
+rxgains2gelnagaina2=@srom
+rxgains2gtrisoa2=@srom
+rxgains2gtrelnabypa2=@srom
+rxgains5gelnagaina2=@srom
+rxgains5gtrisoa2=@srom
+rxgains5gtrelnabypa2=@srom
+maxp5gb0a2=@srom
+maxp5gb1a2=@srom
+maxp5gb2a2=@srom
+maxp5gb3a2=@srom
+pa5ga2=@srom
+pa5g40a2=@srom
+pa5g80a2=@srom
+maxp5gb4a0=@srom
+maxp5gb0a0=@srom
+maxp5gb1a0=@srom
+maxp5gb2a0=@srom
+maxp5gb3a0=@srom
+pa5g40a0=@srom
+pa5g80a0=@srom
+maxp5gb4a1=@srom
+maxp5gb0a1=@srom
+maxp5gb1a1=@srom
+maxp5gb2a1=@srom
+maxp5gb3a1=@srom
+pa5g40a1=@srom
+pa5g80a1=@srom
+mcsbw205gx1po=@srom
+mcsbw405gx1po=@srom
+mcsbw805gx1po=@srom
+mcsbw205gx2po=@srom
+mcsbw405gx2po=@srom
+mcsbw805gx2po=@srom
+mcslr5gx1po=@srom
+mcslr5gx2po=@srom
+sb20in80and160hr5gx1po=@srom
+sb20in80and160lr5gx1po=@srom
+sb40and80hr5gx1po=@srom
+sb20in80and160hr5gx2po=@srom
+sb20in80and160lr5gx2po=@srom
+sb40and80hr5gx2po=@srom
+tssiposslope2g=@srom
+epagain2g=@srom
+papdcap2g=@srom
+tssiposslope5g=@srom
+epagain5g=@srom
+papdcap5g=@srom
+gainctrlsph=@srom
+measpower=@srom
+tempsense_slope=@srom
+tempcorrx=@srom
+tempsense_option=@srom
+measpower1=@srom
+measpower2=@srom
+pdoffsetcck=@srom
+pdoffset20in40m5gb0=@srom
+pdoffset20in40m5gb1=@srom
+pdoffset20in40m5gb2=@srom
+pdoffset20in40m5gb3=@srom
+pdoffset20in40m5gb4=@srom
+pdoffset40in80m5gb0=@srom
+pdoffset40in80m5gb1=@srom
+pdoffset40in80m5gb2=@srom
+pdoffset40in80m5gb3=@srom
+pdoffset40in80m5gb4=@srom
+pdoffset20in80m5gb0=@srom
+pdoffset20in80m5gb1=@srom
+pdoffset20in80m5gb2=@srom
+pdoffset20in80m5gb3=@srom
+pdoffset20in80m5gb4=@srom
+rpcal2g=@srom
+rpcal5gb0=@srom
+rpcal5gb1=@srom
+rpcal5gb2=@srom
+rpcal5gb3=@srom
+subvid=@srom
+boardflags4=@srom
+boardnum=@srom
+pcieingress_war=@srom
+sar2g=@srom
+sar5g=@srom

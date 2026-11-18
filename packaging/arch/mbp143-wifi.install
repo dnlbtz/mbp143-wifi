@@ -1,0 +1,11 @@
+post_install() {
+  /usr/bin/mbp143-wifi-setup install || true
+}
+
+post_upgrade() {
+  /usr/bin/mbp143-wifi-setup install || true
+}
+
+pre_remove() {
+  /usr/bin/mbp143-wifi-setup remove || true
+}

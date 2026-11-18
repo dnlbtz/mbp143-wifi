@@ -1,0 +1,43 @@
+# Maintainer: Daniel Betz <dnlbtz@gmail.com>
+
+pkgname=mbp143-wifi
+pkgver=1.1.0
+pkgrel=1
+pkgdesc='Wi-Fi for the 15" MacBook Pro of 2017 (MacBookPro14,3): BCM43602 board file from the chip, firmware with Apple'"'"'s front-end table'
+arch=('any')
+url='https://github.com/dnlbtz/mbp143-wifi'
+license=('MIT' 'LicenseRef-Broadcom-bcm43xx')
+# linux-firmware-broadcom: the fallback runs on its own image when the chip
+# cannot be read.
+depends=('python' 'kmod' 'networkmanager' 'iw' 'linux-firmware-broadcom')
+makedepends=('git')
+backup=('etc/NetworkManager/conf.d/macbookWifiStableMac.conf'
+        'etc/NetworkManager/dispatcher.d/91-wifi-prefer-5ghz')
+install=mbp143-wifi.install
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+# v1.1.0 -> 1.1.0, three commits later 1.1.0.r3.g1234567
+pkgver() {
+  cd "$pkgname"
+  git describe --long --tags --match 'v[0-9]*' --abbrev=7 2>/dev/null |
+    sed -E 's/^v//; s/-0-g[0-9a-f]+$//; s/-([0-9]+)-g([0-9a-f]+)$/.r\1.g\2/' | grep . ||
+    printf '0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+package() {
+  cd "$pkgname"
+  local share="$pkgdir/usr/share/$pkgname"
+  install -Dm644 firmware/brcmfmac43602-pcie.bin "$share/brcmfmac43602-pcie.bin"
+  install -Dm644 firmware/femPatch.txt "$share/femPatch.txt"
+  install -Dm644 board/template.txt "$share/template.txt"
+  install -Dm644 board/sromTable.json "$share/sromTable.json"
+  install -Dm755 setup/mbp143-wifi-setup "$pkgdir/usr/bin/mbp143-wifi-setup"
+  install -Dm644 board/fixed.txt \
+    "$pkgdir/usr/lib/firmware/brcm/brcmfmac43602-pcie.Apple Inc.-MacBookPro14,3.txt"
+  install -Dm644 conf/macbookWifiStableMac.conf "$pkgdir/etc/NetworkManager/conf.d/macbookWifiStableMac.conf"
+  install -Dm755 conf/91-wifi-prefer-5ghz "$pkgdir/etc/NetworkManager/dispatcher.d/91-wifi-prefer-5ghz"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 firmware/LICENCE.broadcom_bcm43xx "$pkgdir/usr/share/licenses/$pkgname/LICENCE.broadcom_bcm43xx"
+}

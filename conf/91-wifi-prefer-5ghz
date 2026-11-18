@@ -1,0 +1,37 @@
+#!/bin/bash
+# NetworkManager dispatcher, prefer 5 GHz when the same network has it.
+#
+# After brcmfmac is (re)loaded (at boot, after a hibernation, by hand)
+# NetworkManager connects before the chip's 5 GHz scan results are in and
+# lands on 2.4 GHz, often much weaker than 5 GHz from the same access point.
+# NetworkManager has no band preference, and pinning the connection to 5 GHz
+# would leave the machine offline where only 2.4 GHz reaches. So: when a
+# Wi-Fi interface comes up on 2.4 GHz, rescan once; if the same SSID is seen
+# on 5 GHz at 30 % or better, re-activate the connection once. At most once
+# per 2 minutes per interface, so it cannot loop.
+#
+
+IFACE="${1:-}"
+ACTION="${2:-}"
+[ "$ACTION" = up ] || exit 0
+[ "${DEVICE_IFACE:-$IFACE}" ] || exit 0
+iw dev "$IFACE" info >/dev/null 2>&1 || exit 0          # Wi-Fi only
+
+STAMP=/run/wifi-prefer-5ghz.$IFACE
+[ -f "$STAMP" ] && [ $(( $(date +%s) - $(stat -c %Y "$STAMP") )) -lt 120 ] && exit 0
+
+(
+    sleep 3
+    freq=$(iw dev "$IFACE" link | awk '/freq:/{print int($2)}')
+    [ -n "$freq" ] && [ "$freq" -lt 3000 ] || exit 0
+    ssid=$(iw dev "$IFACE" link | sed -n 's/^\s*SSID: //p')
+    nmcli device wifi rescan ifname "$IFACE" >/dev/null 2>&1
+    sleep 6
+    best=$(nmcli -t -f SSID,FREQ,SIGNAL device wifi list ifname "$IFACE" 2>/dev/null \
+        | awk -F: -v s="$ssid" '$1==s && $2 ~ /^5/ && $3+0 >= 30 {print $3; exit}')
+    [ -n "$best" ] || exit 0
+    touch "$STAMP"
+    logger -t wifi-prefer-5ghz "$IFACE on ${freq} MHz, '$ssid' seen on 5 GHz at ${best} %: reconnecting"
+    nmcli connection up "${CONNECTION_ID:-$ssid}" ifname "$IFACE" >/dev/null 2>&1
+) </dev/null >/dev/null 2>&1 &
+exit 0

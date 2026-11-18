@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""mbp143-wifi-setup install|remove|show: the Wi-Fi firmware and board file for
+the BCM43602 in the MacBookPro14,3, made on the machine itself.
+
+install (root; the package runs it after installing):
+  1. checks for a MacBookPro14,3 (DMI) with a BCM43602 (PCI 14e4:43ba);
+  2. unloads brcmfmac and reads the chip's SROM over PCIe: board type, flags
+     and the factory calibration of this chip;
+  3. writes the board file from board/template.txt, each "name=@srom" line
+     with the chip's value;
+  4. writes the firmware: linux-firmware's brcmfmac43602-pcie.bin, as shipped
+     in this package, with the changes in firmware/femPatch.txt (Apple's
+     front-end table and Bluetooth setup);
+  5. puts both into /usr/lib/firmware/updates/brcm, where the kernel looks
+     before linux-firmware's own files, keeps the SROM and its values in
+     /var/lib/mbp143-wifi, and loads brcmfmac again.
+  The Wi-Fi connection drops for about 20 seconds. If any step fails, nothing
+  is written to /usr/lib/firmware/updates and the machine keeps
+  linux-firmware's firmware with the package's fixed board file.
+
+remove: deletes what install wrote, and reloads brcmfmac if it is loaded.
+show: what install would write, without unloading anything when the SROM
+  was read before (it uses /var/lib/mbp143-wifi/srom.bin).
+
+Stdlib only.
+"""
+import ctypes, glob, hashlib, json, mmap, os, struct, subprocess, sys, tempfile, time
+
+SHARE = os.environ.get('MBP143_WIFI_SHARE', '/usr/share/mbp143-wifi')
+UPDATES = '/usr/lib/firmware/updates/brcm'
+FW_NAME = 'brcmfmac43602-pcie.bin'
+BOARD_NAME = 'brcmfmac43602-pcie.Apple Inc.-MacBookPro14,3.txt'
+STATE = '/var/lib/mbp143-wifi'
+STOCK_SHA = 'bf4cfc23ee952a3d82ef33a0f5f87853201c98f1bed034876a910f354f37862d'
+PATCHED_SHA = 'b34c409d5cec3c9c3b233db044dc852f796ea7b9371199568a5db17695ecd40b'
+MODULES = ('brcmfmac_wcc', 'brcmfmac')
+
+
+class Skip(Exception):
+    """A reason to leave the machine on the fixed board file."""
+
+
+def say(msg):
+    print(f'mbp143-wifi: {msg}', flush=True)
+
+
+# --- the machine --------------------------------------------------------------
+
+def find_chip():
+    try:
+        model = open('/sys/class/dmi/id/product_name').read().strip()
+    except OSError:
+        model = ''
+    if model != 'MacBookPro14,3':
+        raise Skip(f'this is not a MacBookPro14,3 ({model or "no DMI product name"})')
+    for dev in glob.glob('/sys/bus/pci/devices/*'):
+        try:
+            ids = [open(f'{dev}/{f}').read().strip() for f in ('vendor', 'device')]
+        except OSError:
+            continue
+        if ids == ['0x14e4', '0x43ba']:
+            return dev
+    raise Skip('no BCM43602 (PCI 14e4:43ba) found')
+
+
+def loaded():
+    return [m for m in MODULES if os.path.isdir(f'/sys/module/{m}')]
+
+
+def unload():
+    # brcmfmac loads brcmfmac_wcc itself once its firmware is up, so right after
+    # a load the first try can miss it; try a few times.
+    for _ in range(5):
+        for m in loaded():
+            subprocess.run(['modprobe', '-r', m], check=False, stderr=subprocess.DEVNULL)
+        if not loaded():
+            return
+        time.sleep(2)
+    raise Skip('brcmfmac could not be unloaded, so the chip could not be read')
+
+
+def load():
+    subprocess.run(['modprobe', 'brcmfmac'], check=False)
+
+
+# --- the SROM -------------------------------------------------------------------
+# As macOS's driver reads it (AirPort.BrcmNIC, _srom_var_init and _sprom_read_pci):
+# ChipCommon through BAR0's window; words below 0x200 directly from ChipCommon
+# 0x800, the rest through the SROM command registers 0x190/0x194/0x198; on chip
+# revisions below 3 chip control bits 2, 3, 8, 9 and 21 cleared while reading.
+
+WINDOW, CHIPCOMMON = 0x80, 0x18000000
+
+
+def crc8(data):
+    table = []
+    for i in range(256):
+        c = i
+        for _ in range(8):
+            c = (c >> 1) ^ 0xab if c & 1 else c >> 1
+        table.append(c)
+    c = 0xff
+    for b in data:
+        c = table[(c ^ b) & 0xff]
+    return c
+
+
+def read_srom(dev):
+    cfg = os.open(f'{dev}/config', os.O_RDWR)
+    old = struct.unpack('<I', os.pread(cfg, 4, WINDOW))[0]
+    fd = os.open(f'{dev}/resource0', os.O_RDWR | os.O_SYNC)
+    m = mmap.mmap(fd, 0x8000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+    anchor = ctypes.c_char.from_buffer(m)
+    base = ctypes.addressof(anchor)
+    rd16 = lambda off: ctypes.c_uint16.from_address(base + off).value
+    rd32 = lambda off: ctypes.c_uint32.from_address(base + off).value
+
+    def wr32(off, v):
+        ctypes.c_uint32.from_address(base + off).value = v
+
+    words, chipctl = [], None
+    try:
+        os.pwrite(cfg, struct.pack('<I', CHIPCOMMON), WINDOW)
+        chipid = rd32(0)
+        if chipid & 0xffff != 0xaa52:
+            raise Skip(f'unexpected chip id {chipid:#x}')
+        if not (rd32(0x04) & 0x40000000 and rd32(0x190) & 1):
+            raise Skip('the chip reports no SROM')
+        if (chipid >> 16) & 0xf < 3:
+            chipctl = rd32(0x28)
+            wr32(0x28, chipctl & ~0x0020030c)
+        for i in range(0x400):
+            if i < 0x200:
+                words.append(rd16(0x800 + 2 * i))
+                continue
+            wr32(0x194, 2 * i)
+            wr32(0x190, 0x80000000)
+            for _ in range(1000):
+                if not rd32(0x190) & 0x80000000:
+                    break
+                time.sleep(0.0001)
+            else:
+                raise Skip(f'reading SROM word {i:#x} timed out')
+            words.append(rd32(0x198) & 0xffff)
+    finally:
+        if chipctl is not None:
+            wr32(0x28, chipctl)
+        os.pwrite(cfg, struct.pack('<I', old), WINDOW)
+        del anchor
+        m.close()
+        os.close(fd)
+        os.close(cfg)
+    raw = struct.pack('<1024H', *words)
+    if words[0x40] != 0x9999 or words[0x3ff] & 0xff != 12 or crc8(raw) != 0x9f:
+        raise Skip('the SROM is not revision 12 with a good checksum')
+    return raw
+
+
+def shift(m): return (m & -m).bit_length() - 1
+def width(m): return bin(m).count('1')
+
+
+def fmt(val, wd, fl, signed=True):
+    if fl & 4:
+        return f'0x{val:x}'
+    if signed and fl & 8 and (val >> (wd - 1)) & 1:
+        return str(val - (1 << wd))
+    return str(val)
+
+
+def srom_vars(raw, table):
+    """The SROM's variables as macOS's driver writes them (flags: 0x1 continued
+    in the next row, 0x2 none when all ones, 0x4 hex, 0x8 signed, 0x20 MAC
+    address, 0x80 no variable, 0x100 array element; per path: words 0x100 +
+    0x48 * path)."""
+    w = struct.unpack('<1024H', raw)
+    out = {'sromrev': '12'}
+    rows, arr, i = table['main'], None, 0
+    while i < len(rows):
+        name, _, fl, off, mask = rows[i]
+        if fl & 0x80:
+            i += 1
+            continue
+        if fl & 0x20:
+            out[name] = ':'.join(f'{b:02x}' for k in range(3) for b in struct.pack('>H', w[off + k]))
+            i += 1
+            continue
+        if fl & 0x100 and arr is None:
+            arr = (name, [])
+        val, wd = (w[off] & mask) >> shift(mask), width(mask)
+        while rows[i][2] & 1:
+            i += 1
+            if rows[i][3]:
+                val += ((w[rows[i][3]] & rows[i][4]) >> shift(rows[i][4])) << wd
+                wd += width(rows[i][4])
+        last = rows[i][2]
+        i += 1
+        if fl & 2 and val == (1 << wd) - 1:
+            continue
+        if arr is not None:
+            arr[1].append(fmt(val, wd, fl))
+            if not last & 0x100:
+                out[arr[0]] = ','.join(arr[1])
+                arr = None
+        else:
+            out[name] = fmt(val, wd, fl)
+    for p in range(3):
+        arr = None
+        for name, _, fl, off, mask in table['perpath']:
+            if fl & 0x80:
+                continue
+            if fl & 0x100 and arr is None:
+                arr = (name, [])
+            val, wd = (w[0x100 + 0x48 * p + off] & mask) >> shift(mask), width(mask)
+            if fl & 2 and val == (1 << wd) - 1:
+                continue
+            if arr is not None:
+                arr[1].append(fmt(val, wd, fl))
+                if not fl & 0x100:
+                    out[f'{arr[0]}{p}'] = ','.join(arr[1])
+                    arr = None
+            else:
+                out[f'{name}{p}'] = fmt(val, wd, fl, signed=False)
+    return out
+
+
+# --- what gets written ------------------------------------------------------------
+
+def board_file(chip):
+    out = ['# Written by mbp143-wifi-setup from its template and this machine\'s Wi-Fi chip.']
+    for line in open(f'{SHARE}/template.txt'):
+        line = line.rstrip('\n')
+        if line.endswith('=@srom'):
+            name = line[:-len('=@srom')]
+            if name not in chip:
+                raise Skip(f'the chip has no value for {name}')
+            line = f'{name}={chip[name]}'
+        elif line.startswith('#') or not line:
+            continue
+        out.append(line)
+    return ('\n'.join(out) + '\n').encode()
+
+
+def firmware():
+    fw = bytearray(open(f'{SHARE}/{FW_NAME}', 'rb').read())
+    if hashlib.sha256(fw).hexdigest() != STOCK_SHA:
+        raise Skip('the shipped firmware is not the expected file')
+    for line in open(f'{SHARE}/femPatch.txt'):
+        if not line.strip() or line.startswith('#'):
+            continue
+        off, old, new = line.split()
+        off, old, new = int(off, 0), bytes.fromhex(old), bytes.fromhex(new)
+        if fw[off:off + len(old)] != old:
+            raise Skip(f'unexpected bytes at {off:#x}')
+        fw[off:off + len(new)] = new
+    if hashlib.sha256(fw).hexdigest() != PATCHED_SHA:
+        raise Skip('the patched firmware is not the expected file')
+    return bytes(fw)
+
+
+def write(path, data, mode=0o644):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, 'wb') as f:
+        f.write(data)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def remove_files():
+    for p in (f'{UPDATES}/{FW_NAME}', f'{UPDATES}/{BOARD_NAME}'):
+        if os.path.exists(p):
+            os.remove(p)
+
+
+def install():
+    dev = find_chip()
+    say('reading the Wi-Fi chip; the connection drops for about 20 seconds')
+    try:
+        unload()
+        raw = read_srom(dev)
+        table = json.load(open(f'{SHARE}/sromTable.json'))
+        chip = srom_vars(raw, table)
+        board, fw = board_file(chip), firmware()
+        os.makedirs(STATE, exist_ok=True)
+        write(f'{STATE}/srom.bin', raw)
+        write(f'{STATE}/sromVars.txt', ''.join(f'{k}={v}\n' for k, v in chip.items()).encode())
+        write(f'{UPDATES}/{BOARD_NAME}', board)
+        write(f'{UPDATES}/{FW_NAME}', fw)
+        say(f'wrote the board file and the firmware to {UPDATES}')
+    except Skip:
+        remove_files()
+        raise
+    finally:
+        load()
+
+
+def show():
+    raw = open(f'{STATE}/srom.bin', 'rb').read()
+    chip = srom_vars(raw, json.load(open(f'{SHARE}/sromTable.json')))
+    sys.stdout.write(board_file(chip).decode())
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) == 2 else ''
+    if cmd not in ('install', 'remove', 'show'):
+        sys.exit(__doc__)
+    if cmd == 'show':
+        return show()
+    if os.geteuid() != 0:
+        sys.exit('mbp143-wifi-setup: run it as root')
+    if cmd == 'remove':
+        remove_files()
+        if os.path.isdir(STATE):
+            for f in os.listdir(STATE):
+                os.remove(f'{STATE}/{f}')
+            os.rmdir(STATE)
+        if loaded():
+            try:
+                unload()
+            except Skip:
+                pass
+            load()
+        say('removed the firmware and board file made for this machine')
+        return
+    try:
+        install()
+    except Skip as e:
+        say(f'{e}; keeping linux-firmware\'s firmware and the fixed board file')
+
+
+if __name__ == '__main__':
+    main()

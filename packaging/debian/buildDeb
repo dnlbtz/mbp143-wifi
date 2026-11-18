@@ -1,0 +1,67 @@
+#!/bin/bash
+# buildDeb [OUTDIR]: build mbp143-wifi_<version>_all.deb for Ubuntu and its
+# derivatives (default OUTDIR: the current directory). Needs dpkg-deb.
+set -eu
+src=$(realpath "$(dirname "$0")/../..")
+out=$(realpath "${1:-.}")
+ver=1.1.0
+pkg=mbp143-wifi
+
+root=$(mktemp -d); trap 'rm -rf "$root"' EXIT
+chmod 755 "$root"
+share=$root/usr/share/$pkg
+install -Dm644 "$src/firmware/brcmfmac43602-pcie.bin" "$share/brcmfmac43602-pcie.bin"
+install -Dm644 "$src/firmware/femPatch.txt" "$share/femPatch.txt"
+install -Dm644 "$src/board/template.txt" "$share/template.txt"
+install -Dm644 "$src/board/sromTable.json" "$share/sromTable.json"
+install -Dm755 "$src/setup/mbp143-wifi-setup" "$root/usr/sbin/mbp143-wifi-setup"
+install -Dm644 "$src/board/fixed.txt" \
+  "$root/usr/lib/firmware/brcm/brcmfmac43602-pcie.Apple Inc.-MacBookPro14,3.txt"
+install -Dm644 "$src/conf/macbookWifiStableMac.conf" "$root/etc/NetworkManager/conf.d/macbookWifiStableMac.conf"
+install -Dm755 "$src/conf/91-wifi-prefer-5ghz" "$root/etc/NetworkManager/dispatcher.d/91-wifi-prefer-5ghz"
+doc=$root/usr/share/doc/$pkg
+install -Dm644 "$src/README.md" "$doc/README.md"
+{ echo "mbp143-wifi, except the firmware:"; echo; cat "$src/LICENSE"; echo
+  echo "brcmfmac43602-pcie.bin (Broadcom's firmware, from linux-firmware, unmodified):"; echo
+  cat "$src/firmware/LICENCE.broadcom_bcm43xx"; } > "$root/copyright"
+install -m644 "$root/copyright" "$doc/copyright"; rm "$root/copyright"
+
+mkdir -p "$root/DEBIAN"
+printf '%s\n' /etc/NetworkManager/conf.d/macbookWifiStableMac.conf \
+  /etc/NetworkManager/dispatcher.d/91-wifi-prefer-5ghz > "$root/DEBIAN/conffiles"
+cat > "$root/DEBIAN/control" <<CTRL
+Package: $pkg
+Version: $ver
+Architecture: all
+Maintainer: Daniel Betz <dnlbtz@gmail.com>
+Depends: python3, kmod, network-manager, iw, linux-firmware-broadcom-wireless | linux-firmware
+Conflicts: macbookpro14-3-wifi
+Replaces: macbookpro14-3-wifi
+Provides: macbookpro14-3-wifi
+Section: kernel
+Priority: optional
+Homepage: https://github.com/dnlbtz/mbp143-wifi
+Description: Wi-Fi for the 15" MacBook Pro of 2017 (MacBookPro14,3)
+ Builds the BCM43602's board file at install from the machine's own Wi-Fi
+ chip (its factory calibration), and the firmware from linux-firmware's
+ with Apple's front-end table for this board. Also a stable per-machine MAC
+ address and a NetworkManager dispatcher that moves to 5 GHz when the same
+ network is there.
+CTRL
+cat > "$root/DEBIAN/postinst" <<'POST'
+#!/bin/sh
+set -e
+[ "$1" = configure ] || exit 0
+/usr/sbin/mbp143-wifi-setup install || true
+POST
+cat > "$root/DEBIAN/prerm" <<'PRERM'
+#!/bin/sh
+set -e
+[ "$1" = remove ] || exit 0
+/usr/sbin/mbp143-wifi-setup remove || true
+PRERM
+chmod 755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
+
+deb=$out/${pkg}_${ver}_all.deb
+dpkg-deb --root-owner-group -Zxz --build "$root" "$deb" >/dev/null
+echo "$deb"
